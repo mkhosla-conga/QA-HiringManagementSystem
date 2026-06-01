@@ -120,6 +120,93 @@ public class <ClassName> extends BaseTest {
 
 ---
 
+## ⚠️ MANDATORY CREDENTIAL RULE — No Hardcoded Credentials
+
+**All user credentials (email, password) MUST be read from `config.properties`. Never hardcode email addresses or passwords directly in test classes.**
+
+This applies to **all actors** — primary roles (Admin, Recruiter 1, Candidate 1) as well as any additional actors registered during the test (Recruiter 2, Candidate 2, Candidate 3, etc.).
+
+### config.properties — Full Structure
+
+All test user credentials are stored in `src/main/resources/testdata/config.properties`:
+
+```properties
+# API Configuration
+base.url=http://localhost:5000
+
+# Primary Test Users (used by BaseTest.setUpWithRole)
+admin.email=admin@test.com
+admin.password=admin123
+
+recruiter.email=jaydeep@test.com
+recruiter.password=pass123
+
+candidate.email=manik@test.com
+candidate.password=pass123
+
+# Additional Test Users (used in E2E / multi-actor tests)
+recruiter2.email=smitha@test.com
+recruiter2.password=pass123
+recruiter2.fullName=Smitha Recruiter
+recruiter2.phone=9000000003
+recruiter2.role=RECRUITER
+
+candidate2.email=prajwal@test.com
+candidate2.password=pass123
+candidate2.fullName=Prajwal Candidate
+candidate2.phone=9000000005
+candidate2.role=CANDIDATE
+
+candidate3.email=omkar@test.com
+candidate3.password=pass123
+candidate3.fullName=Omkar Candidate
+candidate3.phone=9000000006
+candidate3.role=CANDIDATE
+```
+
+> ⚠️ When a new actor is needed in a test, add their credentials to `config.properties` first, then read them in the test using `BaseTest.getProperty(key)`.
+
+### How to Read Credentials from config.properties
+
+Use `BaseTest.getProperty(String key)` to read any property at runtime:
+
+```java
+// Read credentials for additional actors
+String recruiter2Email    = BaseTest.getProperty("recruiter2.email");
+String recruiter2Password = BaseTest.getProperty("recruiter2.password");
+String recruiter2FullName = BaseTest.getProperty("recruiter2.fullName");
+String recruiter2Phone    = BaseTest.getProperty("recruiter2.phone");
+String recruiter2Role     = BaseTest.getProperty("recruiter2.role");
+```
+
+### ✅ CORRECT — Credentials from config.properties
+
+```java
+HashMap<String, String> recruiter2Data = new HashMap<>();
+recruiter2Data.put("email",    BaseTest.getProperty("recruiter2.email"));
+recruiter2Data.put("password", BaseTest.getProperty("recruiter2.password"));
+recruiter2Data.put("fullName", BaseTest.getProperty("recruiter2.fullName"));
+recruiter2Data.put("phone",    BaseTest.getProperty("recruiter2.phone"));
+recruiter2Data.put("role",     BaseTest.getProperty("recruiter2.role"));
+publicActorHelper.registerUser(recruiter2Data);
+
+String tokenR2 = BaseTest.generateAccessToken(
+    BaseTest.getProperty("recruiter2.email"),
+    BaseTest.getProperty("recruiter2.password")
+);
+```
+
+### ❌ WRONG — Hardcoded credentials (never do this)
+
+```java
+// NEVER hardcode credentials in test classes
+recruiter2Data.put("email", "smitha@test.com");       // ❌ hardcoded
+recruiter2Data.put("password", "pass123");             // ❌ hardcoded
+String token = BaseTest.generateAccessToken("smitha@test.com", "pass123"); // ❌ hardcoded
+```
+
+---
+
 ## 6 Critical Framework Patterns (MUST FOLLOW)
 
 ### Pattern 1 — @BeforeClass Setup
@@ -709,7 +796,7 @@ public void adminDeleteUser() throws Exception {
 | `register-recruiter.json` | Register recruiter | `email`, `password`, `fullName`, `phone`, `role` (= `RECRUITER`) |
 | `candidate.json` | Candidate entity data | `firstName`, `lastName`, `email`, `phone`, `position` |
 | `update-profile.json` | Update user profile | `fullName`, `phone`, `skills`, `experience` |
-| `config.properties` | Environment config | `base.url`, `admin.email`, `admin.password`, `recruiter.email`, `recruiter.password`, `candidate.email`, `candidate.password` |
+| `config.properties` | Environment config | `base.url`; primary users: `admin.email/password`, `recruiter.email/password`, `candidate.email/password`; additional actors: `recruiter2.*`, `candidate2.*`, `candidate3.*` (email, password, fullName, phone, role) — **ALL credentials must be read from here, never hardcoded** |
 
 ---
 
