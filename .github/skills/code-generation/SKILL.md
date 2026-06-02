@@ -10,6 +10,72 @@ All generated Java code MUST follow the Critical Framework Patterns and naming c
 
 ---
 
+## ⛔ PREREQUISITE — MANDATORY before generating any test class
+
+> **Do NOT start code generation until BOTH of these files exist:**
+>
+> | File | Path | Must exist? |
+> |---|---|---|
+> | `<UserStoryName>.json` | `src/main/resources/TestCases/data/<UserStoryName>.json` | ✅ YES |
+> | `<UserStoryName>.xlsx` | `src/main/resources/TestCases/<UserStoryName>.xlsx` | ✅ YES |
+>
+> **Correct pipeline order:**
+> ```
+> 1. Create <UserStoryName>.json          ← testcase-generation skill
+> 2. Run TestCaseGenerator → .xlsx        ← testcase-generation skill (immediately after step 1)
+> 3. Write <ClassName>Test.java           ← this skill (only after steps 1+2 are done)
+> ```
+>
+> ❌ NEVER skip step 2. Excel MUST be generated right after JSON, before the test class.
+
+---
+
+## ⚠️ GENERIC NAMING RULE — MANDATORY in all test class code
+
+> **NEVER use real person names** anywhere in test code — not in comments, not in log messages, not in assert messages, not in string literals.  
+> Always use **generic role-based identifiers**: `Admin1`, `Recruiter1`, `Recruiter2`, `Candidate1`, `Candidate2`, `Candidate3`.
+
+| Real name (NEVER use) | Generic replacement (ALWAYS use) |
+|---|---|
+| `manik`, `Manik` | `Candidate1` |
+| `prajwal`, `Prajwal` | `Candidate2` |
+| `omkar`, `Omkar` | `Candidate3` |
+| `jaydeep`, `Jaydeep` | `Recruiter1` |
+| `smitha`, `Smitha` | `Recruiter2` |
+| Any real person's name in Admin role | `Admin1` |
+
+**This rule applies EVERYWHERE in the test class:**
+- All `HashMap.put("coverLetter", ...)` values
+- All `log.info(...)` step labels and messages
+- All `Assert` failure messages
+- All inline `//` comments and Javadoc
+- All class-level actor mapping comments
+
+**Correct:**
+```java
+// admin      → Admin1     (userDetails prefix: admin)
+// recruiter1 → Recruiter1 (userDetails prefix: recruiter1)
+// candidate1 → Candidate1 (userDetails prefix: candidate1)
+
+public ActorHelper actorHelperForCandidate1;   // Candidate1 — candidate1 prefix
+
+log.info("[E2E] ━━━ STEP 22 ━━━ Admin1 deletes Candidate3");
+Assert.assertNotNull(userId, "Candidate3 must exist before deletion");
+```
+
+**Wrong:**
+```java
+// candidate3  → manik@test.com   (Candidate1 in story)   ← ❌ real name in comment
+public ActorHelper actorHelperForCandidate1;   // manik — candidate3 prefix  ← ❌ real name
+log.info("[E2E] ━━━ STEP 22 ━━━ Admin1 deletes Candidate3 (omkar@test.com)");  ← ❌ real name in log
+Assert.assertNotNull(userId, "Candidate3 (omkar) must exist");  ← ❌ real name in assert message
+```
+
+> ✅ Email addresses are fetched at runtime via `tokenManager.getEmail("prefix")` — they are NEVER hardcoded as string literals in test code.  
+> ✅ `userDetails.properties` prefix keys (`"candidate1"`, `"candidate2"`, `"candidate3"`, etc.) are technical keys, NOT names — they are acceptable.
+
+---
+
 ## Framework Directory Structure
 
 ```
@@ -36,9 +102,10 @@ src/
 │   │   │   ├── ApplicationResponse.java  # Application API response
 │   │   │   └── UserProfileResponse.java  # User Profile API response
 │   │   └── utils/
-│   │       ├── BaseTest.java             # Base class: role-based token setup, tearDown
+│   │       ├── BaseTest.java             # Base class: tearDown, generateAccessToken
 │   │       ├── RestUtils.java            # REST Assured wrapper: GET/POST/PUT/DELETE/PATCH/upload
-│   │       └── URLGenerator.java        # All API endpoint constants
+│   │       ├── URLGenerator.java         # All API endpoint constants
+│   │       └── UserTokenManager.java     # ⭐ Reads userDetails.properties → generates all JWT tokens → stores in HashMap
 │   └── resources/
 │       ├── TestCases/
 │       │   ├── data/
@@ -47,7 +114,8 @@ src/
 │       ├── UserStory/
 │       │   └── <UserStoryName>.doc       # User story Word documents
 │       └── testdata/
-│           ├── config.properties         # base.url, admin/recruiter/candidate credentials
+│           ├── config.properties         # base.url only
+│           ├── userDetails.properties    # ⭐ ALL user credentials (email + password per user prefix)
 │           ├── apply-job.json            # Test data for apply-job tests
 │           ├── candidate.json            # Test data for candidate tests
 │           ├── create-job.json           # Test data for create-job tests
@@ -64,145 +132,123 @@ src/
 
 ## Test Class Template
 
+The generated test class MUST have:
+- **ONE `@BeforeClass setUp()`** — loads all tokens via `UserTokenManager`
+- **ONE `@Test` method** — all test steps from the JSON test cases are written **sequentially inline**
+- **NO** `dependsOnMethods`, NO per-step `@Test` methods, NO private helper methods
+
+> ✅ This ensures: if any step fails → the entire test stops immediately (correct E2E behaviour).  
+> ✅ All IDs captured in one step (e.g. `jobId`, `appId`) are **local variables** passed naturally to the next step.  
+> ❌ NEVER split steps into separate `@Test` methods.
+
 ```java
 package com.hiring.tests;
 
 import com.hiring.commonMethods.CommonMethod;
 import com.hiring.helpers.ActorHelper;
+import com.hiring.pojo.ApplicationRequestPOJO;
 import com.hiring.utils.BaseTest;
 import com.hiring.utils.RestUtils;
+import com.hiring.utils.URLGenerator;
+import com.hiring.utils.UserTokenManager;
+import com.google.gson.Gson;
 import io.restassured.response.Response;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.testng.Assert;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
+/**
+ * <UserStoryName> — End-to-End Test (Single @Test, all steps inlined)
+ *
+ * Steps:
+ *  Step 01 – ...
+ *  Step 02 – ...
+ *  (one line per test case step from the JSON test case file)
+ */
 public class <ClassName> extends BaseTest {
 
-    public BaseTest baseTest;
+    private static final Logger log = LogManager.getLogger(<ClassName>.class);
 
-    // Role-specific ActorHelper instances
+    // ── UserTokenManager — single source of truth for all credentials ──────────
+    private UserTokenManager tokenManager;
+
+    // ── Actors: only declare what the test actually uses ──────────────────────
     public ActorHelper actorHelperForAdmin;
     public ActorHelper actorHelperForRecruiter;
     public ActorHelper actorHelperForCandidate;
 
-    // Role-specific RestUtils instances
     public RestUtils restUtilsForAdmin;
     public RestUtils restUtilsForRecruiter;
     public RestUtils restUtilsForCandidate;
 
-    // Role-specific access tokens
+    // Access tokens — for reference / debugging only
     public String accessTokenAdmin;
     public String accessTokenRecruiter;
     public String accessTokenCandidate;
 
+    private final Gson gson = new Gson();
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  SETUP — runs once before the @Test method
+    // ═══════════════════════════════════════════════════════════════════════════
+
     @BeforeClass
     public void setUp() {
-        baseTest = new BaseTest();
-        accessTokenAdmin    = baseTest.setUpWithRole("ADMIN");
-        accessTokenRecruiter = baseTest.setUpWithRole("RECRUITER");
-        accessTokenCandidate = baseTest.setUpWithRole("CANDIDATE");
+        /*
+         * UserTokenManager reads userDetails.properties and generates all tokens.
+         * NEVER hardcode email or password here — always use tokenManager.getToken/getEmail/getPassword.
+         */
+        tokenManager = new UserTokenManager();
 
-        restUtilsForAdmin    = new RestUtils(accessTokenAdmin);
-        actorHelperForAdmin  = new ActorHelper(restUtilsForAdmin);
+        accessTokenAdmin     = tokenManager.getToken("admin");
+        accessTokenRecruiter = tokenManager.getToken("recruiter1");
+        accessTokenCandidate = tokenManager.getToken("candidate1");
 
-        restUtilsForRecruiter    = new RestUtils(accessTokenRecruiter);
-        actorHelperForRecruiter  = new ActorHelper(restUtilsForRecruiter);
+        restUtilsForAdmin    = tokenManager.getRestUtils("admin");
+        actorHelperForAdmin  = tokenManager.getActorHelper("admin");
 
-        restUtilsForCandidate    = new RestUtils(accessTokenCandidate);
-        actorHelperForCandidate  = new ActorHelper(restUtilsForCandidate);
+        restUtilsForRecruiter   = tokenManager.getRestUtils("recruiter1");
+        actorHelperForRecruiter = tokenManager.getActorHelper("recruiter1");
+
+        restUtilsForCandidate   = tokenManager.getRestUtils("candidate1");
+        actorHelperForCandidate = tokenManager.getActorHelper("candidate1");
     }
 
-    // @Test methods go here
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  SINGLE @Test — ALL steps from the JSON test case file inlined sequentially
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * TC_XXX_001 — <TestCaseName>
+     * <TestCaseDescription>
+     */
+    @Test(groups = {"Regression"}, description = "TC_XXX_001 - <TestCaseName>")
+    public void <testMethodName>() throws Exception {
+
+        // ── Load per-test static data — MANDATORY, always first line ─────────
+        // File name = test method name, e.g. <testMethodName>.json
+        HashMap<String, String> testData = CommonMethod.readTestData(
+                "src/main/resources/testdata/<testMethodName>.json");
+
+        // ── STEP 01 — <Step description from JSON> ───────────────────────────
+        log.info("[E2E] ━━━ STEP 01 ━━━ <step label>");
+        // ... populate HashMap using testData.get("key"), then call ActorHelper ...
+
+        // ── STEP 02 — <Step description from JSON> ───────────────────────────
+        log.info("[E2E] ━━━ STEP 02 ━━━ <step label>");
+        // ... API call + Assert ...
+
+        // (continue for all steps in the JSON test case)
+
+        log.info("[E2E] ━━━ ALL STEPS COMPLETED SUCCESSFULLY ━━━");
+    }
 }
-```
-
----
-
-## ⚠️ MANDATORY CREDENTIAL RULE — No Hardcoded Credentials
-
-**All user credentials (email, password) MUST be read from `config.properties`. Never hardcode email addresses or passwords directly in test classes.**
-
-This applies to **all actors** — primary roles (Admin, Recruiter 1, Candidate 1) as well as any additional actors registered during the test (Recruiter 2, Candidate 2, Candidate 3, etc.).
-
-### config.properties — Full Structure
-
-All test user credentials are stored in `src/main/resources/testdata/config.properties`:
-
-```properties
-# API Configuration
-base.url=http://localhost:5000
-
-# Primary Test Users (used by BaseTest.setUpWithRole)
-admin.email=admin@test.com
-admin.password=admin123
-
-recruiter.email=jaydeep@test.com
-recruiter.password=pass123
-
-candidate.email=manik@test.com
-candidate.password=pass123
-
-# Additional Test Users (used in E2E / multi-actor tests)
-recruiter2.email=smitha@test.com
-recruiter2.password=pass123
-recruiter2.fullName=Smitha Recruiter
-recruiter2.phone=9000000003
-recruiter2.role=RECRUITER
-
-candidate2.email=prajwal@test.com
-candidate2.password=pass123
-candidate2.fullName=Prajwal Candidate
-candidate2.phone=9000000005
-candidate2.role=CANDIDATE
-
-candidate3.email=omkar@test.com
-candidate3.password=pass123
-candidate3.fullName=Omkar Candidate
-candidate3.phone=9000000006
-candidate3.role=CANDIDATE
-```
-
-> ⚠️ When a new actor is needed in a test, add their credentials to `config.properties` first, then read them in the test using `BaseTest.getProperty(key)`.
-
-### How to Read Credentials from config.properties
-
-Use `BaseTest.getProperty(String key)` to read any property at runtime:
-
-```java
-// Read credentials for additional actors
-String recruiter2Email    = BaseTest.getProperty("recruiter2.email");
-String recruiter2Password = BaseTest.getProperty("recruiter2.password");
-String recruiter2FullName = BaseTest.getProperty("recruiter2.fullName");
-String recruiter2Phone    = BaseTest.getProperty("recruiter2.phone");
-String recruiter2Role     = BaseTest.getProperty("recruiter2.role");
-```
-
-### ✅ CORRECT — Credentials from config.properties
-
-```java
-HashMap<String, String> recruiter2Data = new HashMap<>();
-recruiter2Data.put("email",    BaseTest.getProperty("recruiter2.email"));
-recruiter2Data.put("password", BaseTest.getProperty("recruiter2.password"));
-recruiter2Data.put("fullName", BaseTest.getProperty("recruiter2.fullName"));
-recruiter2Data.put("phone",    BaseTest.getProperty("recruiter2.phone"));
-recruiter2Data.put("role",     BaseTest.getProperty("recruiter2.role"));
-publicActorHelper.registerUser(recruiter2Data);
-
-String tokenR2 = BaseTest.generateAccessToken(
-    BaseTest.getProperty("recruiter2.email"),
-    BaseTest.getProperty("recruiter2.password")
-);
-```
-
-### ❌ WRONG — Hardcoded credentials (never do this)
-
-```java
-// NEVER hardcode credentials in test classes
-recruiter2Data.put("email", "smitha@test.com");       // ❌ hardcoded
-recruiter2Data.put("password", "pass123");             // ❌ hardcoded
-String token = BaseTest.generateAccessToken("smitha@test.com", "pass123"); // ❌ hardcoded
 ```
 
 ---
@@ -211,33 +257,37 @@ String token = BaseTest.generateAccessToken("smitha@test.com", "pass123"); // �
 
 ### Pattern 1 — @BeforeClass Setup
 
-Every test class MUST extend `BaseTest` and set up role-specific `RestUtils` + `ActorHelper` instances:
+Every test class MUST extend `BaseTest` and use `UserTokenManager` to load all JWT tokens from `userDetails.properties`.  
+**NEVER hardcode email or password in a test class.**
 
 ```java
 @BeforeClass
 public void setUp() {
-    baseTest = new BaseTest();
-    accessTokenAdmin     = baseTest.setUpWithRole("ADMIN");
-    accessTokenRecruiter = baseTest.setUpWithRole("RECRUITER");
-    accessTokenCandidate = baseTest.setUpWithRole("CANDIDATE");
+    tokenManager = new UserTokenManager();
 
-    restUtilsForAdmin    = new RestUtils(accessTokenAdmin);
-    actorHelperForAdmin  = new ActorHelper(restUtilsForAdmin);
+    // Read tokens by user prefix (defined in userDetails.properties)
+    accessTokenAdmin     = tokenManager.getToken("admin");
+    accessTokenRecruiter = tokenManager.getToken("recruiter1");
+    accessTokenCandidate = tokenManager.getToken("candidate1");
 
-    restUtilsForRecruiter   = new RestUtils(accessTokenRecruiter);
-    actorHelperForRecruiter = new ActorHelper(restUtilsForRecruiter);
+    restUtilsForAdmin    = tokenManager.getRestUtils("admin");
+    actorHelperForAdmin  = tokenManager.getActorHelper("admin");
 
-    restUtilsForCandidate   = new RestUtils(accessTokenCandidate);
-    actorHelperForCandidate = new ActorHelper(restUtilsForCandidate);
+    restUtilsForRecruiter   = tokenManager.getRestUtils("recruiter1");
+    actorHelperForRecruiter = tokenManager.getActorHelper("recruiter1");
+
+    restUtilsForCandidate   = tokenManager.getRestUtils("candidate1");
+    actorHelperForCandidate = tokenManager.getActorHelper("candidate1");
 }
 ```
 
-Only initialize the role-specific instances needed by the test class. If a test only uses the recruiter role, only the recruiter block is required.
+Only initialise the actors needed by the test class. If a test only uses the recruiter role, only the recruiter block is needed.
 
 ### Pattern 2 — Instance Variables
 
 ```java
-public BaseTest baseTest;
+// Single source of truth for all credentials — NEVER hardcode email/password
+private UserTokenManager tokenManager;
 
 public ActorHelper actorHelperForAdmin;
 public ActorHelper actorHelperForRecruiter;
@@ -247,6 +297,7 @@ public RestUtils restUtilsForAdmin;
 public RestUtils restUtilsForRecruiter;
 public RestUtils restUtilsForCandidate;
 
+// Stored for reference / debugging only
 public String accessTokenAdmin;
 public String accessTokenRecruiter;
 public String accessTokenCandidate;
@@ -254,54 +305,185 @@ public String accessTokenCandidate;
 
 ### Pattern 3 — Test Data Reading
 
-Use `CommonMethod.readTestData(filePath)` to load JSON files from `src/main/resources/testdata/`:
+Use `CommonMethod.readTestData(filePath)` to load JSON files from `src/main/resources/testdata/`.
+
+> ✅ **Per-Test Data File Rule (MANDATORY for multi-actor / multi-step tests):**  
+> Every `@Test` method MUST have its own dedicated JSON file named after the test method.  
+> **File name = test method name**, e.g. `fullHiringLifecycleE2E.json` for `fullHiringLifecycleE2E()`.  
+> This keeps each test's static data isolated — changes to one test never affect another.
 
 ```java
-HashMap<String, String> testData = CommonMethod.readTestData("src/main/resources/testdata/create-job.json");
+// Load at the very start of the @Test method — one load, used throughout
+HashMap<String, String> testData = CommonMethod.readTestData(
+        "src/main/resources/testdata/fullHiringLifecycleE2E.json");
 ```
 
-Each JSON file is a **flat key-value map** where all values are strings.
+> ❌ NEVER hardcode fullName, phone, role, job titles, descriptions, cover letters, or any other  
+> static test data as string literals inside the test class.  
+> ✅ Always read them from the per-test JSON file via `testData.get("key")`.
 
-> ⚠️ **File naming rule:** The JSON file name should describe the scenario (e.g., `create-job.json`, `apply-job.json`, `register-candidate.json`).
+### Pattern 4 — Per-Test Data JSON Key Convention
 
-### Pattern 4 — Test Data JSON Format
+> ## 🔴 MANDATORY — Read `userDetails.properties` Before Creating Testdata JSON
+>
+> **Before writing any testdata JSON file**, read `src/main/resources/testdata/userDetails.properties`
+> to get the **exact user prefixes** and their **actual email addresses**.  
+> The key prefixes in your testdata JSON MUST match the prefixes in `userDetails.properties` exactly.
+>
+> ### Actual User Registry (from `userDetails.properties`)
+>
+> | Prefix | Actual Email | Password | Role | Generic fullName to use in JSON |
+> |---|---|---|---|---|
+> | `admin` | `admin@test.com` | `admin123` | ADMIN | `Admin1` |
+> | `recruiter1` | `jaydeep@test.com` | `pass123` | RECRUITER | `Recruiter1` |
+> | `recruiter2` | `smitha@test.com` | `pass123` | RECRUITER | `Recruiter2` |
+> | `candidate1` | `omkar@test.com` | `pass123` | CANDIDATE | `Candidate1` |
+> | `candidate2` | `prajwal@test.com` | `pass123` | CANDIDATE | `Candidate2` |
+> | `candidate3` | `manik@test.com` | `pass123` | CANDIDATE | `Candidate3` |
+>
+> ✅ **Email and password are NEVER put in the testdata JSON** — they are read at runtime via  
+> `tokenManager.getEmail("prefix")` / `tokenManager.getPassword("prefix")`.  
+> ✅ The `fullName` in testdata JSON uses the **generic role-based identifier** (`Candidate1`, `Recruiter1`, etc.) — never real names.  
+> ✅ The prefix used in testdata JSON keys (e.g. `candidate1.fullName`) MUST match the prefix in `userDetails.properties` (e.g. `candidate1.email`).  
+> ❌ Do NOT invent new prefixes — only use: `admin`, `recruiter1`, `recruiter2`, `candidate1`, `candidate2`, `candidate3`.
 
-All test data files are flat JSON with string values only:
+All per-test data files use **prefixed flat keys** so all data for a test lives in one file without collisions:
+
+```
+<prefix>.<field>      — actor registration data  (prefix MUST match userDetails.properties prefix)
+<jobN>.<field>        — job creation data  
+<appKey>.coverLetter  — application cover letter
+```
+
+**Full example — `fullHiringLifecycleE2E.json`:**
+
+> Key prefixes (`admin`, `recruiter1`, `candidate1`) match `userDetails.properties` exactly.  
+> `fullName` values use generic identifiers — NOT real names from email addresses.
 
 ```json
 {
-  "title": "Software Engineer",
-  "description": "Develop and maintain Java applications",
-  "location": "Pune",
-  "company": "ABC Pvt Ltd",
-  "salary": "10 LPA",
-  "type": "FULL_TIME"
+  "admin.fullName": "Admin1",
+  "admin.phone":    "9000000001",
+  "admin.role":     "ADMIN",
+
+  "recruiter1.fullName": "Recruiter1",
+  "recruiter1.phone":    "9000000002",
+  "recruiter1.role":     "RECRUITER",
+
+  "recruiter2.fullName": "Recruiter2",
+  "recruiter2.phone":    "9000000003",
+  "recruiter2.role":     "RECRUITER",
+
+  "candidate1.fullName": "Candidate1",
+  "candidate1.phone":    "9000000004",
+  "candidate1.role":     "CANDIDATE",
+
+  "candidate2.fullName": "Candidate2",
+  "candidate2.phone":    "9000000005",
+  "candidate2.role":     "CANDIDATE",
+
+  "candidate3.fullName": "Candidate3",
+  "candidate3.phone":    "9000000006",
+  "candidate3.role":     "CANDIDATE",
+
+  "job1.title":       "Backend Engineer",
+  "job1.description": "Java Spring Boot developer",
+  "job1.location":    "Bangalore, India",
+  "job1.company":     "CloudNine Technologies",
+  "job1.salary":      "12,00,000 - 18,00,000",
+  "job1.type":        "FULL_TIME",
+
+  "c1Job1.coverLetter": "Candidate1 applying for Backend Engineer at CloudNine.",
+  "dup.coverLetter":    "Duplicate application attempt.",
+  "closedJob.coverLetter": "Attempting to apply for closed Backend Engineer role."
 }
 ```
+
+**Usage in test — prefix binding across files:**
+
+```java
+// testData key prefix "candidate1" → binds to userDetails.properties "candidate1.email=omkar@test.com"
+HashMap<String, String> testData = CommonMethod.readTestData(
+        "src/main/resources/testdata/fullHiringLifecycleE2E.json");
+
+// Static fields from testdata JSON (prefix must match userDetails.properties)
+adminReg.put("fullName", testData.get("admin.fullName"));   // "Admin1"
+adminReg.put("phone",    testData.get("admin.phone"));       // "9000000001"
+adminReg.put("role",     testData.get("admin.role"));        // "ADMIN"
+
+// Runtime credentials always from tokenManager — NEVER from testdata JSON
+adminReg.put("email",    tokenManager.getEmail("admin"));    // → "admin@test.com"
+adminReg.put("password", tokenManager.getPassword("admin")); // → "admin123"
+
+job1Data.put("title",    testData.get("job1.title"));
+
+applyData.put("coverLetter", testData.get("c1Job1.coverLetter"));
+```
+
+> ⚠️ Email and password are NEVER in the per-test JSON — they always come from  
+> `tokenManager.getEmail("prefix")` / `tokenManager.getPassword("prefix")` (read from `userDetails.properties`).
 
 Numeric values that need to be passed as integers in POJOs are stored as strings in JSON and converted in the POJO builder using `Integer.parseInt(testData.get("fieldName"))`.
 
-### Pattern 5 — Test Method Structure
+
+### Pattern 5 — Single @Test Method Structure (MANDATORY)
+
+> ✅ **Every user story generates exactly ONE `@Test` method.**  
+> All steps from the JSON test case are written **flat and sequential** inside that single method.  
+> ❌ NEVER create one `@Test` per step. ❌ NEVER use `dependsOnMethods`.
 
 ```java
 /**
- * Brief description of what the test validates.
- * Steps:
- * 1. Read test data from JSON
- * 2. Call ActorHelper method with the correct role
- * 3. Assert response status code and body fields
+ * TC_XXX_001 — <TestCaseName from JSON testCaseName>
+ * <TestCaseDescription from JSON testCaseDescription>
  */
-@Test(groups = {"Smoke"}, description = "testMethodName")
-public void testMethodName() throws Exception {
-    HashMap<String, String> testData = CommonMethod.readTestData("src/main/resources/testdata/<file>.json");
-    Response response = actorHelperFor<Role>.<helperMethod>(testData);
-    Assert.assertEquals(response.getStatusCode(), <expectedCode>, "<assertion message>");
+@Test(groups = {"Regression"}, description = "TC_XXX_001 - <testCaseName>")
+public void <testMethodName>() throws Exception {
+
+    // ── Load per-test static data — MANDATORY, always the first line ──────
+    // ❌ NEVER put static values (names, phones, titles, cover letters) directly in the test.
+    // ✅ ALL static data must be in src/main/resources/testdata/<testMethodName>.json
+    HashMap<String, String> testData = CommonMethod.readTestData(
+            "src/main/resources/testdata/<testMethodName>.json");
+
+    // ── STEP 01 — <step field from JSON steps[0]> ──────────────────────────
+    log.info("[E2E] ━━━ STEP 01 ━━━ <step label>");
+    HashMap<String, String> step01Data = new HashMap<>();
+    step01Data.put("key", testData.get("step01.key"));   // ✅ always from testData
+    Response step01Response = actorHelperFor<Role>.<helperMethod>(step01Data);
+    Assert.assertEquals(step01Response.getStatusCode(), 200, "<assertion message>");
+    String capturedId = step01Response.jsonPath().getString("data.id"); // passed to next steps as local var
+
+    // ── STEP 02 — <step field from JSON steps[1]> ──────────────────────────
+    log.info("[E2E] ━━━ STEP 02 ━━━ <step label>");
+    HashMap<String, String> step02Data = new HashMap<>();
+    step02Data.put("jobId",       capturedId);                         // runtime value — OK as local var
+    step02Data.put("coverLetter", testData.get("step02.coverLetter")); // ✅ static text from testData
+    Response step02Response = actorHelperFor<Role>.<helperMethod>(step02Data);
+    Assert.assertEquals(step02Response.getStatusCode(), 200, "<assertion message>");
+
+    // (repeat for every step in JSON steps array)
+
+    log.info("[E2E] ━━━ ALL STEPS COMPLETED SUCCESSFULLY ━━━");
 }
 ```
 
-> ⚠️ **CRITICAL — Test Group Rule:**
-> Use `groups = {"Smoke"}` for basic happy-path tests and `groups = {"Regression"}` for negative/edge-case tests.
-> Always include `description` matching the method name.
+> ⚠️ **Test Group Rule:**  
+> Use `groups = {"Smoke"}` for basic single-action happy-path tests.  
+> Use `groups = {"Regression"}` for E2E multi-step flows.  
+> Always set `description` to the `testCaseId + " - " + testCaseName` from the JSON.
+
+### How to map JSON test case steps to code
+
+Each `steps[]` entry in the JSON becomes one inline block inside the single `@Test` method:
+
+| JSON field | Maps to in code |
+|---|---|
+| `testCaseName` | `@Test description` + method name |
+| `testCaseDescription` | Javadoc comment above `@Test` |
+| `steps[n].step` | `log.info("[E2E] ━━━ STEP NN ━━━ ...")` label |
+| `steps[n].requestBody` | `HashMap<String, String>` populated from the JSON keys |
+| `steps[n].responseBody` | `Assert.assertEquals(response.getStatusCode(), ...)` + field assertions |
 
 ### Pattern 6 — POJO Request Body (MANDATORY for structured payloads)
 
@@ -361,7 +543,11 @@ Never serialize payloads inside test classes — delegate to `ActorHelper`.
 | Read Excel data | `CommonMethod` | `readExcelData(filePath)` |
 | Update Excel cell | `CommonMethod` | `updateExcelData(filePath, rowNumber, columnName, newValue)` |
 | Generate Excel from JSON | `TestCaseGenerator` | `generate(userStoryName)` |
-| Role-based token setup | `BaseTest` | `setUpWithRole(role)` |
+| Get JWT token by user prefix | `UserTokenManager` | `getToken(userKey)` |
+| Get RestUtils by user prefix | `UserTokenManager` | `getRestUtils(userKey)` |
+| Get ActorHelper by user prefix | `UserTokenManager` | `getActorHelper(userKey)` |
+| Get email by user prefix | `UserTokenManager` | `getEmail(userKey)` |
+| Get password by user prefix | `UserTokenManager` | `getPassword(userKey)` |
 
 ---
 
@@ -414,7 +600,9 @@ public Response getMyApplications() throws Exception
 public Response getApplicationsByJob(String jobId) throws Exception
 
 // Update application status — Recruiter role required (PUT /api/applications/{id}/status?status=<STATUS>)
-// Valid status values: PENDING, REVIEWED, SHORTLISTED, REJECTED, ACCEPTED
+// Valid status values: INTERVIEW_SCHEDULED, ON_HOLD, REJECTED, SELECTED
+// Cascading behaviour: when status=SELECTED → all other applicants for that job are auto-REJECTED
+//                      and the job is deactivated (active=false) automatically by the API
 public Response updateApplicationStatus(String applicationId, String status) throws Exception
 ```
 
@@ -506,7 +694,7 @@ URLGenerator.JOB_BY_ID                  // GET, PUT, DELETE  /api/jobs/{id}
 URLGenerator.APPLICATIONS              // POST  /api/applications
 URLGenerator.MY_APPLICATIONS           // GET   /api/applications/my
 URLGenerator.APPLICATIONS_BY_JOB       // GET   /api/applications/job/{jobId}
-URLGenerator.APPLICATION_STATUS        // PUT   /api/applications/{id}/status
+URLGenerator.APPLICATION_STATUS        // PUT   /api/applications/{id}/status  (query param: status)
 
 // User Profile
 URLGenerator.USER_PROFILE              // GET, PUT  /api/users/profile
@@ -521,21 +709,84 @@ URLGenerator.ADMIN_USER_BY_ID          // DELETE /api/admin/users/{id}
 
 ---
 
+## UserTokenManager — Credential Management
+
+`UserTokenManager` is the **single source of truth** for all user credentials and JWT tokens.  
+It reads `userDetails.properties`, generates a JWT access token per user via POST `/api/auth/login`, and stores them in a `HashMap` keyed by user prefix.
+
+> ✅ **Rule**: All test classes MUST use `UserTokenManager` to get tokens.  
+> ❌ **Never** hardcode `email`, `password`, or call `setUpWithRole()` in test classes.
+
+### `userDetails.properties` format
+
+> ✅ **Do NOT hardcode credentials anywhere in test classes or skill examples.**  
+> The actual values are defined in `src/main/resources/testdata/userDetails.properties`.  
+> Always read them at runtime via `tokenManager.getEmail("prefix")` and `tokenManager.getPassword("prefix")`.
+
+```
+File: src/main/resources/testdata/userDetails.properties
+
+Format per user:
+  <prefix>.email=<value>
+  <prefix>.password=<value>
+
+Supported prefixes: admin, recruiter1, recruiter2, candidate1, candidate2, candidate3
+```
+
+### UserTokenManager API
+
+```java
+// Instantiate — loads all users and generates tokens immediately
+UserTokenManager tokenManager = new UserTokenManager();
+
+// Get JWT token for a user prefix
+String token = tokenManager.getToken("recruiter1");
+
+// Get RestUtils pre-configured with the token
+RestUtils restUtils = tokenManager.getRestUtils("candidate2");
+
+// Get ActorHelper pre-configured with the token
+ActorHelper actorHelper = tokenManager.getActorHelper("admin");
+
+// Get email for a user prefix (use when building registration payloads)
+String email = tokenManager.getEmail("candidate1");
+
+// Get password for a user prefix (use when building login/registration payloads)
+String password = tokenManager.getPassword("candidate1");
+```
+
+### User Prefix → Test Actor Mapping
+
+> 🔴 **Always read `userDetails.properties` first** to confirm the actual email per prefix before generating any testdata JSON or test class.
+
+| Property prefix | Actual Email (from `userDetails.properties`) | Password | Role | Generic actor name | Typical field name |
+|---|---|---|---|---|---|
+| `admin` | `admin@test.com` | `admin123` | Admin | `Admin1` | `actorHelperForAdmin` |
+| `recruiter1` | `jaydeep@test.com` | `pass123` | Recruiter | `Recruiter1` | `actorHelperForRecruiter1` |
+| `recruiter2` | `smitha@test.com` | `pass123` | Recruiter | `Recruiter2` | `actorHelperForRecruiter2` |
+| `candidate1` | `omkar@test.com` | `pass123` | Candidate | `Candidate1` | `actorHelperForCandidate1` |
+| `candidate2` | `prajwal@test.com` | `pass123` | Candidate | `Candidate2` | `actorHelperForCandidate2` |
+| `candidate3` | `manik@test.com` | `pass123` | Candidate | `Candidate3` | `actorHelperForCandidate3` |
+
+> ⚠️ The actual email values shown above are resolved at runtime via `tokenManager.getEmail("prefix")`.  
+> ⚠️ The `fullName` in testdata JSON uses the **generic name** (`Candidate1`, `Recruiter1`) — NOT the email username.  
+> ✅ Testdata JSON key prefix (e.g. `candidate1.fullName`) MUST match the `userDetails.properties` prefix (`candidate1.email`).  
+> ❌ Never hardcode actual email strings in test classes or testdata JSON files.
+
+---
+
 ## BaseTest — Key Methods
 
 ```java
-// Set up and retrieve a role-based token.
-// role: "ADMIN" | "RECRUITER" | "CANDIDATE"
-public String setUpWithRole(String role)
-
-// Static token generators (called by setUpWithRole internally)
-public static String getAdminToken()
-public static String getRecruiterToken()
-public static String getCandidateToken()
-
-// Generic token generator (use when email/password are known)
+// Static token generator (used internally by UserTokenManager — avoid calling directly in tests)
 public static String generateAccessToken(String email, String password)
+
+// Resets RestAssured after class — called automatically via @AfterClass
+public void tearDown()
 ```
+
+> ⚠️ Do NOT call `setUpWithRole()` or `generateAccessToken()` directly in test classes.  
+> Always use `UserTokenManager` instead.
 
 ---
 
@@ -689,98 +940,375 @@ Builder: `new UserProfileRequestPOJO().createUserProfilePayload(testData)`
 
 ## Test Pattern Descriptions
 
-### Pattern 1 — Happy Path (Role-specific action)
-Read test data → call ActorHelper with the correct role → assert 200/201 status → optionally assert response body field.
+> ✅ **All patterns below are written as a single `@Test` method with steps inlined.**  
+> ❌ DO NOT write one `@Test` per step.
+
+> ## 🔴 MANDATORY DATA ACCESS RULE — applies to ALL patterns below
+>
+> ❌ **NEVER hardcode** any static test value (fullName, phone, role, job title, description, location,  
+> company, salary, type, cover letter, profile fields, etc.) as a string literal inside a test class.  
+>
+> ✅ **ALWAYS** load a per-test JSON file at the start of every `@Test` method and read all static  
+> values via `testData.get("key")`:
+>
+> ```java
+> HashMap<String, String> testData = CommonMethod.readTestData(
+>         "src/main/resources/testdata/<testMethodName>.json");
+> ```
+>
+> | Source | What goes there |
+> |---|---|
+> | `testdata/<testMethodName>.json` | fullName, phone, role, job fields, cover letters, profile fields |
+> | `tokenManager.getEmail/getPassword("prefix")` | email, password (from `userDetails.properties`) |
+> | Local variables | Runtime IDs (jobId, applicationId) captured from responses |
+
+### Pattern 1 — Single-Step Happy Path
+
+Simple one-step test: load per-test JSON → call ActorHelper → assert status.
 
 ```java
-@Test(groups = {"Smoke"}, description = "postNewJob")
+@Test(groups = {"Smoke"}, description = "TC_XXX_001 - Post New Job")
 public void postNewJob() throws Exception {
-    HashMap<String, String> testData = CommonMethod.readTestData("src/main/resources/testdata/create-job.json");
-    Response response = actorHelperForRecruiter.createJob(testData);
+
+    HashMap<String, String> testData = CommonMethod.readTestData(
+            "src/main/resources/testdata/postNewJob.json");
+
+    // ── STEP 01 — Create job ──────────────────────────────────────────────
+    log.info("[E2E] ━━━ STEP 01 ━━━ Recruiter creates job");
+    HashMap<String, String> jobData = new HashMap<>();
+    jobData.put("title",       testData.get("job.title"));
+    jobData.put("description", testData.get("job.description"));
+    jobData.put("location",    testData.get("job.location"));
+    jobData.put("company",     testData.get("job.company"));
+    jobData.put("salary",      testData.get("job.salary"));
+    jobData.put("type",        testData.get("job.type"));
+    Response response = actorHelperForRecruiter.createJob(jobData);
     Assert.assertEquals(response.getStatusCode(), 200, "Job creation failed");
+    log.info("[E2E] ━━━ ALL STEPS COMPLETED SUCCESSFULLY ━━━");
+}
+```
+
+**`postNewJob.json`:**
+```json
+{
+  "job.title":       "Software Developer",
+  "job.description": "Java backend developer role",
+  "job.location":    "Bangalore, India",
+  "job.company":     "TechCorp Solutions",
+  "job.salary":      "8,00,000 - 15,00,000",
+  "job.type":        "FULL_TIME"
 }
 ```
 
 ### Pattern 2 — Chain: Create then Read
-Create a resource → extract ID from response → use ID in subsequent call → assert result.
+
+Create a resource → extract ID from response → use ID in the next step.
 
 ```java
-@Test(groups = {"Regression"}, description = "createAndGetJobById")
+@Test(groups = {"Regression"}, description = "TC_XXX_001 - Create and Get Job By ID")
 public void createAndGetJobById() throws Exception {
-    HashMap<String, String> testData = CommonMethod.readTestData("src/main/resources/testdata/create-job.json");
-    Response createResponse = actorHelperForRecruiter.createJob(testData);
-    Assert.assertEquals(createResponse.getStatusCode(), 200);
+
+    HashMap<String, String> testData = CommonMethod.readTestData(
+            "src/main/resources/testdata/createAndGetJobById.json");
+
+    // ── STEP 01 — Create job ───────────────────────────────────────────────
+    log.info("[E2E] ━━━ STEP 01 ━━━ Recruiter creates job");
+    HashMap<String, String> jobData = new HashMap<>();
+    jobData.put("title",       testData.get("job.title"));
+    jobData.put("description", testData.get("job.description"));
+    jobData.put("location",    testData.get("job.location"));
+    jobData.put("company",     testData.get("job.company"));
+    jobData.put("salary",      testData.get("job.salary"));
+    jobData.put("type",        testData.get("job.type"));
+    Response createResponse = actorHelperForRecruiter.createJob(jobData);
+    Assert.assertEquals(createResponse.getStatusCode(), 200, "Job creation failed");
     String jobId = createResponse.jsonPath().getString("data.id");
 
+    // ── STEP 02 — Get job by ID ────────────────────────────────────────────
+    log.info("[E2E] ━━━ STEP 02 ━━━ Get job by ID");
     Response getResponse = actorHelperForRecruiter.getJobById(jobId);
-    Assert.assertEquals(getResponse.getStatusCode(), 200);
-    Assert.assertEquals(getResponse.jsonPath().getString("data.title"), testData.get("title"));
+    Assert.assertEquals(getResponse.getStatusCode(), 200, "Get job by ID failed");
+    Assert.assertEquals(getResponse.jsonPath().getString("data.title"), testData.get("job.title"));
+
+    log.info("[E2E] ━━━ ALL STEPS COMPLETED SUCCESSFULLY ━━━");
 }
 ```
 
-### Pattern 3 — Chain: Create → Act → Validate
-Create a job → apply as candidate → recruiter updates status → validate status change.
+**`createAndGetJobById.json`:**
+```json
+{
+  "job.title":       "Software Developer",
+  "job.description": "Java backend developer role",
+  "job.location":    "Bangalore, India",
+  "job.company":     "TechCorp Solutions",
+  "job.salary":      "8,00,000 - 15,00,000",
+  "job.type":        "FULL_TIME"
+}
+```
+
+### Pattern 3 — Multi-Step E2E: Create → Apply → Update Status
+
+Full hiring flow across multiple actors — all inlined in one method.
 
 ```java
-@Test(groups = {"Regression"}, description = "applyAndUpdateApplicationStatus")
+@Test(groups = {"Regression"}, description = "TC_XXX_001 - Apply and Update Application Status")
 public void applyAndUpdateApplicationStatus() throws Exception {
-    // Step 1: Recruiter creates job
-    HashMap<String, String> jobData = CommonMethod.readTestData("src/main/resources/testdata/create-job.json");
+
+    HashMap<String, String> testData = CommonMethod.readTestData(
+            "src/main/resources/testdata/applyAndUpdateApplicationStatus.json");
+
+    // ── STEP 01 — Recruiter creates job ───────────────────────────────────
+    log.info("[E2E] ━━━ STEP 01 ━━━ Recruiter creates job");
+    HashMap<String, String> jobData = new HashMap<>();
+    jobData.put("title",       testData.get("job.title"));
+    jobData.put("description", testData.get("job.description"));
+    jobData.put("location",    testData.get("job.location"));
+    jobData.put("company",     testData.get("job.company"));
+    jobData.put("salary",      testData.get("job.salary"));
+    jobData.put("type",        testData.get("job.type"));
+    Response jobResponse = actorHelperForRecruiter.createJob(jobData);
+    Assert.assertEquals(jobResponse.getStatusCode(), 200, "Job creation failed");
+    String jobId = jobResponse.jsonPath().getString("data.id");
+
+    // ── STEP 02 — Candidate applies for the job ───────────────────────────
+    log.info("[E2E] ━━━ STEP 02 ━━━ Candidate applies for job");
+    HashMap<String, String> applyData = new HashMap<>();
+    applyData.put("jobId",       jobId);
+    applyData.put("coverLetter", testData.get("apply.coverLetter"));
+    Response applyResponse = actorHelperForCandidate.applyForJob(applyData);
+    Assert.assertEquals(applyResponse.getStatusCode(), 200, "Application submission failed");
+    String applicationId = applyResponse.jsonPath().getString("data.id");
+    Assert.assertEquals(applyResponse.jsonPath().getString("data.status"), "PENDING");
+
+    // ── STEP 03 — Recruiter shortlists the candidate ──────────────────────
+    log.info("[E2E] ━━━ STEP 03 ━━━ Recruiter schedules interview for candidate");
+    Response statusResponse = actorHelperForRecruiter.updateApplicationStatus(applicationId, "INTERVIEW_SCHEDULED");
+    Assert.assertEquals(statusResponse.getStatusCode(), 200, "Status update failed");
+    Assert.assertEquals(statusResponse.jsonPath().getString("data.status"), "INTERVIEW_SCHEDULED");
+    // ⚠️ use SELECTED to trigger auto-rejection of other applicants + job deactivation
+
+    log.info("[E2E] ━━━ ALL STEPS COMPLETED SUCCESSFULLY ━━━");
+}
+```
+
+**`applyAndUpdateApplicationStatus.json`:**
+```json
+{
+  "job.title":         "Software Developer",
+  "job.description":   "Java backend developer role",
+  "job.location":      "Bangalore, India",
+  "job.company":       "TechCorp Solutions",
+  "job.salary":        "8,00,000 - 15,00,000",
+  "job.type":          "FULL_TIME",
+  "apply.coverLetter": "I am excited to apply for this role."
+}
+```
+
+### Pattern 4 — Negative Test (expected non-200 status)
+
+For calls that are expected to fail (400, 403, 401), use `restUtils` directly — NOT `ActorHelper`.  
+`ActorHelper` throws `Exception` on any non-200 status which would break the assertion.
+
+> ⚠️ **Duplicate Application returns 400, NOT 409**  
+> The API returns `HTTP 400 Bad Request` (not 409 Conflict) when a candidate applies to a job they have already applied for.  
+> Always assert `400` for duplicate-apply negative tests.
+
+---
+
+### Pattern 4a — Registration Steps in E2E Tests (MANDATORY)
+
+> 🔴 **NEVER use `actorHelper.registerUser()` for registration steps in E2E tests.**  
+> `ActorHelper.registerUser()` throws `Exception` on any non-200 response.  
+> In a live/shared environment, users may already exist → API returns `400 "Email already registered"` → test crashes before it starts.
+
+**Always use `restUtils.post()` directly for ALL registration steps (Steps 01–04 pattern):**
+
+```java
+// ── STEP 01 — Register Admin1 ─────────────────────────────────────────
+// ✅ Use restUtils.post() directly — tolerates 200 (new) OR 400 (already exists)
+// ❌ NEVER use actorHelper.registerUser() here — it throws on non-200
+HashMap<String, String> adminReg = new HashMap<>();
+adminReg.put("email",    tokenManager.getEmail("admin"));
+adminReg.put("password", tokenManager.getPassword("admin"));
+adminReg.put("fullName", testData.get("admin.fullName"));
+adminReg.put("phone",    testData.get("admin.phone"));
+adminReg.put("role",     testData.get("admin.role"));
+Response adminRegResp = restUtilsForAdmin.post(URLGenerator.AUTH_REGISTER,
+        gson.toJson(new RegisterRequestPOJO().createRegisterPayload(adminReg)));
+// 200 = newly registered; 400/409 = already exists in seeded DB — both are acceptable for setup
+log.info("[E2E] Admin1 register status: {}", adminRegResp.getStatusCode());
+```
+
+**Same pattern for all actors — Recruiter1, Recruiter2, Candidate1, Candidate2, Candidate3:**
+
+```java
+Response rec1RegResp = restUtilsForRecruiter1.post(URLGenerator.AUTH_REGISTER,
+        gson.toJson(new RegisterRequestPOJO().createRegisterPayload(rec1Reg)));
+log.info("[E2E] Recruiter1 register status: {}", rec1RegResp.getStatusCode());
+```
+
+**Required instance variables for the `restUtils` approach:**
+```java
+// Declare ALL restUtils instances — needed for registration steps
+public RestUtils restUtilsForAdmin;
+public RestUtils restUtilsForRecruiter1;
+public RestUtils restUtilsForRecruiter2;
+public RestUtils restUtilsForCandidate1;
+public RestUtils restUtilsForCandidate2;
+public RestUtils restUtilsForCandidate3;
+```
+
+**Required import:**
+```java
+import com.hiring.pojo.RegisterRequestPOJO;
+```
+
+**Rule summary:**
+
+| Step type | Use | Why |
+|---|---|---|
+| Registration (Steps 01–04) | `restUtils.post(URLGenerator.AUTH_REGISTER, ...)` | Tolerates 400/409 already-exists gracefully |
+| All other happy-path calls | `actorHelper.<method>(...)` | Throws on non-200 → test fails fast on real failures |
+| Expected-fail calls (dup apply, closed job, 401) | `restUtils.post(...)` directly | Need to assert the non-200 status code |
+
+> ✅ **Valid recruiter-settable status values**: `INTERVIEW_SCHEDULED`, `ON_HOLD`, `REJECTED`, `SELECTED`  
+> ✅ `SELECTED` is the **only** cascading trigger — auto-rejects all other applicants + deactivates the job  
+> ✅ `PENDING` is the system-set initial state on application submit — recruiters do NOT set this  
+> ❌ Do NOT use `REVIEWED`, `SHORTLISTED`, or `ACCEPTED` — these are not valid API status values
+
+---
+
+```java
+@Test(groups = {"Regression"}, description = "TC_XXX_001 - Duplicate Application Blocked")
+public void verifyDuplicateApplicationBlocked() throws Exception {
+
+    HashMap<String, String> testData = CommonMethod.readTestData(
+            "src/main/resources/testdata/verifyDuplicateApplicationBlocked.json");
+
+    // ── STEP 01 — Create job and apply once ───────────────────────────────
+    log.info("[E2E] ━━━ STEP 01 ━━━ Setup: create job and apply");
+    HashMap<String, String> jobData = new HashMap<>();
+    jobData.put("title",       testData.get("job.title"));
+    jobData.put("description", testData.get("job.description"));
+    jobData.put("location",    testData.get("job.location"));
+    jobData.put("company",     testData.get("job.company"));
+    jobData.put("salary",      testData.get("job.salary"));
+    jobData.put("type",        testData.get("job.type"));
     Response jobResponse = actorHelperForRecruiter.createJob(jobData);
     String jobId = jobResponse.jsonPath().getString("data.id");
 
-    // Step 2: Candidate applies
-    HashMap<String, String> applyData = CommonMethod.readTestData("src/main/resources/testdata/apply-job.json");
-    applyData.put("jobId", jobId);
-    Response applyResponse = actorHelperForCandidate.applyForJob(applyData);
-    String applicationId = applyResponse.jsonPath().getString("data.id");
+    HashMap<String, String> applyData = new HashMap<>();
+    applyData.put("jobId",       jobId);
+    applyData.put("coverLetter", testData.get("apply.coverLetter"));
+    actorHelperForCandidate.applyForJob(applyData);
 
-    // Step 3: Recruiter shortlists
-    Response statusResponse = actorHelperForRecruiter.updateApplicationStatus(applicationId, "SHORTLISTED");
-    Assert.assertEquals(statusResponse.getStatusCode(), 200);
+    // ── STEP 02 — Duplicate apply → expect 400 ───────────────────────────
+    log.info("[E2E] ━━━ STEP 02 ━━━ Duplicate apply — expects 400");
+    HashMap<String, String> dupData = new HashMap<>();
+    dupData.put("jobId",       jobId);
+    dupData.put("coverLetter", testData.get("dup.coverLetter"));
+    String payload = gson.toJson(new ApplicationRequestPOJO().createApplicationPayload(dupData));
+    Response dupResponse = restUtilsForCandidate.post(URLGenerator.APPLICATIONS, payload);
+    Assert.assertEquals(dupResponse.getStatusCode(), 400, "Duplicate application should return 400 Bad Request");
+
+    log.info("[E2E] ━━━ ALL STEPS COMPLETED SUCCESSFULLY ━━━");
 }
 ```
 
-### Pattern 4 — Negative / Authorization Test
-Attempt an action with the wrong role → expect 401 or 403.
-
-```java
-@Test(groups = {"Regression"}, description = "verifyCandidateCannotCreateJob")
-public void verifyCandidateCannotCreateJob() throws Exception {
-    HashMap<String, String> testData = CommonMethod.readTestData("src/main/resources/testdata/create-job.json");
-    Response response = actorHelperForCandidate.createJob(testData);
-    Assert.assertEquals(response.getStatusCode(), 403, "Candidate should not be able to create a job");
+**`verifyDuplicateApplicationBlocked.json`:**
+```json
+{
+  "job.title":         "Software Developer",
+  "job.description":   "Java backend developer role",
+  "job.location":      "Bangalore, India",
+  "job.company":       "TechCorp Solutions",
+  "job.salary":        "10,00,000 - 15,00,000",
+  "job.type":          "FULL_TIME",
+  "apply.coverLetter": "First application.",
+  "dup.coverLetter":   "Duplicate attempt."
 }
 ```
 
 ### Pattern 5 — Profile Update and Validation
-Update profile → get profile → assert updated fields match.
 
 ```java
-@Test(groups = {"Regression"}, description = "updateAndVerifyUserProfile")
+@Test(groups = {"Regression"}, description = "TC_XXX_001 - Update and Verify User Profile")
 public void updateAndVerifyUserProfile() throws Exception {
-    HashMap<String, String> testData = CommonMethod.readTestData("src/main/resources/testdata/update-profile.json");
-    Response updateResponse = actorHelperForCandidate.updateUserProfile(testData);
-    Assert.assertEquals(updateResponse.getStatusCode(), 200);
 
+    HashMap<String, String> testData = CommonMethod.readTestData(
+            "src/main/resources/testdata/updateAndVerifyUserProfile.json");
+
+    // ── STEP 01 — Update profile ───────────────────────────────────────────
+    log.info("[E2E] ━━━ STEP 01 ━━━ Update user profile");
+    HashMap<String, String> profileData = new HashMap<>();
+    profileData.put("fullName",   testData.get("profile.fullName"));
+    profileData.put("phone",      testData.get("profile.phone"));
+    profileData.put("skills",     testData.get("profile.skills"));
+    profileData.put("experience", testData.get("profile.experience"));
+    Response updateResponse = actorHelperForCandidate.updateUserProfile(profileData);
+    Assert.assertEquals(updateResponse.getStatusCode(), 200, "Profile update failed");
+
+    // ── STEP 02 — Verify updated profile ──────────────────────────────────
+    log.info("[E2E] ━━━ STEP 02 ━━━ Verify updated profile");
     Response getResponse = actorHelperForCandidate.getUserProfile();
-    Assert.assertEquals(getResponse.jsonPath().getString("data.fullName"), testData.get("fullName"));
+    Assert.assertEquals(getResponse.getStatusCode(), 200, "Get profile failed");
+    Assert.assertEquals(getResponse.jsonPath().getString("data.fullName"), testData.get("profile.fullName"));
+
+    log.info("[E2E] ━━━ ALL STEPS COMPLETED SUCCESSFULLY ━━━");
+}
+```
+
+**`updateAndVerifyUserProfile.json`:**
+```json
+{
+  "profile.fullName":   "Candidate1 Updated",
+  "profile.phone":      "9999999999",
+  "profile.skills":     "Java, REST API, TestNG",
+  "profile.experience": "3 years"
 }
 ```
 
 ### Pattern 6 — Admin Operations
-Admin lists users → verifies target user exists → deletes user → verifies deletion.
+
+> ✅ Admin-only tests (lookup by email + delete + verify login) use only `tokenManager` — no per-test JSON needed  
+> unless the test also registers users with static data (fullName, phone, etc.), in which case create a JSON file.
 
 ```java
-@Test(groups = {"Regression"}, description = "adminDeleteUser")
+@Test(groups = {"Regression"}, description = "TC_XXX_001 - Admin Delete User")
 public void adminDeleteUser() throws Exception {
-    Response listResponse = actorHelperForAdmin.getAllUsers();
-    Assert.assertEquals(listResponse.getStatusCode(), 200);
-    // Extract a user ID and delete
-    String userId = listResponse.jsonPath().getString("data[0].id");
 
-    Response deleteResponse = actorHelperForAdmin.deleteUser(userId);
-    Assert.assertEquals(deleteResponse.getStatusCode(), 200);
+    // No static form data → no per-test JSON needed here.
+    // Email/password always from tokenManager — never hardcoded.
+
+    // ── STEP 01 — Admin lists all users ───────────────────────────────────
+    log.info("[E2E] ━━━ STEP 01 ━━━ Admin lists users");
+    Response listResponse = actorHelperForAdmin.getAllUsers();
+    Assert.assertEquals(listResponse.getStatusCode(), 200, "Admin get all users failed");
+    List<Map<String, Object>> users = listResponse.jsonPath().getList("data");
+    String targetUserId = null;
+    for (Map<String, Object> user : users) {
+        if (tokenManager.getEmail("candidate1").equals(user.get("email"))) {
+            targetUserId = String.valueOf(user.get("id"));
+            break;
+        }
+    }
+    Assert.assertNotNull(targetUserId, "Target user must exist");
+
+    // ── STEP 02 — Admin deletes the user ──────────────────────────────────
+    log.info("[E2E] ━━━ STEP 02 ━━━ Admin deletes user");
+    Response deleteResponse = actorHelperForAdmin.deleteUser(targetUserId);
+    Assert.assertEquals(deleteResponse.getStatusCode(), 200, "Admin delete user failed");
+
+    // ── STEP 03 — Deleted user cannot login → 401 ─────────────────────────
+    // Use restUtils directly — no token, expect 401
+    log.info("[E2E] ━━━ STEP 03 ━━━ Deleted user cannot login");
+    String email    = tokenManager.getEmail("candidate1");
+    String password = tokenManager.getPassword("candidate1");
+    String loginBody = "{\"email\":\"" + email + "\",\"password\":\"" + password + "\"}";
+    Response loginResponse = new RestUtils().post(URLGenerator.AUTH_LOGIN, loginBody);
+    Assert.assertEquals(loginResponse.getStatusCode(), 401, "Deleted user should not be able to login");
+
+    log.info("[E2E] ━━━ ALL STEPS COMPLETED SUCCESSFULLY ━━━");
 }
 ```
 
@@ -796,7 +1324,8 @@ public void adminDeleteUser() throws Exception {
 | `register-recruiter.json` | Register recruiter | `email`, `password`, `fullName`, `phone`, `role` (= `RECRUITER`) |
 | `candidate.json` | Candidate entity data | `firstName`, `lastName`, `email`, `phone`, `position` |
 | `update-profile.json` | Update user profile | `fullName`, `phone`, `skills`, `experience` |
-| `config.properties` | Environment config | `base.url`; primary users: `admin.email/password`, `recruiter.email/password`, `candidate.email/password`; additional actors: `recruiter2.*`, `candidate2.*`, `candidate3.*` (email, password, fullName, phone, role) — **ALL credentials must be read from here, never hardcoded** |
+| `config.properties` | Environment config | `base.url` only — no credentials |
+| `userDetails.properties` | ⭐ All user credentials | `<prefix>.email`, `<prefix>.password` per user — read by `UserTokenManager` |
 
 ---
 
