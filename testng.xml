@@ -12,4 +12,10 @@
         </classes>
     </test>
 
+    <test name="Candidate Role Tests">
+        <classes>
+            <class name="com.hiring.tests.candidate.CandidateRoleTests"/>
+        </classes>
+    </test>
+
 </suite>
