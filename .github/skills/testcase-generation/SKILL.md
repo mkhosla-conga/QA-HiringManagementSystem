@@ -16,8 +16,24 @@ User Story Input
       ↓
 [Phase 1] Read user story → extract ACs + actors + API contracts
       ↓
-[Phase 2] Create <UserStoryName>.json → generate <UserStoryName>.xlsx
+[Phase 2a] Create <UserStoryName>.json       ← write JSON file first
+      ↓
+[Phase 2b] Run TestCaseGenerator             ← generate <UserStoryName>.xlsx immediately after JSON
+      ↓
+  ✅ STOP — do NOT proceed to code generation until BOTH JSON and Excel exist
 ```
+
+> ⚠️ **STRICT ORDERING RULE**
+>
+> The JSON file and its Excel output MUST both be created and verified **before** any automation
+> test class is written.  
+> Phase 2b (Excel generation) is NOT optional — it MUST run immediately after Phase 2a (JSON creation).
+>
+> **Correct order:**  
+> `JSON created` → `Excel generated` → `test class written`
+>
+> **Wrong order (do NOT do this):**  
+> ❌ `JSON created` → `test class written` → `Excel generated`
 
 ---
 
@@ -29,6 +45,42 @@ User Story Input
 - Extract only the **functional acceptance criteria** that describe what the user wants to achieve.
 - Identify all **actors** (e.g., Admin, Recruiter, Candidate) and their permitted actions.
 - **Ignore** generic pre-conditions like "user must be logged in" — authentication is handled by `BaseTest`.
+
+---
+
+## ⚠️ GENERIC NAMING RULE — MANDATORY for all JSON and Excel test cases
+
+> **NEVER use real person names** (e.g. Manik, Prajwal, Omkar, Jaydeep, Smitha) in any test case content.  
+> Always use **generic role-based identifiers** instead.
+
+| Instead of | Use |
+|---|---|
+| Manik, Prajwal, Omkar, John, Jane... | `Candidate1`, `Candidate2`, `Candidate3` |
+| Jaydeep, Smitha, Bob... | `Recruiter1`, `Recruiter2` |
+| Admin User, Super Admin... | `Admin1` |
+| Any real person's name in fullName, coverLetter, description | Generic placeholder |
+
+**This rule applies to:**
+- `requestBody` values in JSON steps (e.g. `fullName`, `coverLetter`)
+- `responseBody` values in JSON steps (e.g. `fullName`, `candidate.fullName`)
+- Step descriptions in JSON and Excel
+- Any email `fullName` fields
+
+**Correct examples:**
+```json
+{ "fullName": "Candidate1", "coverLetter": "I am Candidate1 applying for this role." }
+{ "fullName": "Recruiter1", "role": "RECRUITER" }
+{ "fullName": "Admin1", "role": "ADMIN" }
+```
+
+**Wrong examples:**
+```json
+{ "fullName": "Manik Candidate" }       ← ❌ real name
+{ "coverLetter": "I am Jaydeep..." }    ← ❌ real name
+```
+
+> ✅ Email addresses from `userDetails.properties` (e.g. `manik@test.com`) MAY appear in responses  
+> since they are system-defined, but `fullName` fields must always use generic identifiers.
 
 ---
 
@@ -68,7 +120,7 @@ Map each user story action to the corresponding POJO to get exact field names �
 | Category | Include? | Description |
 |---|---|---|
 | **Happy Path** | ✅ Always | The main success flow described in the user story |
-| **Business Negative** | ✅ Yes | Failures relevant to the story (e.g., duplicate apply → 409, invalid jobId → 404) |
+| **Business Negative** | ✅ Yes | Failures relevant to the story (e.g., duplicate apply → 400, invalid jobId → 404) |
 | **Authorization (role-based)** | ✅ If story mentions roles | e.g., Recruiter cannot apply, Candidate cannot post jobs |
 | **E2E Flow** | ✅ Always | Comprehensive multi-step test covering the full user story |
 | **Invalid credentials** | ❌ Exclude | Login with wrong password — NOT part of the user story |
@@ -143,6 +195,7 @@ For each identified requirement produce:
 - ✅ Identify API dependencies (e.g., need jobId from search before applying).
 - ❌ Do NOT generate: login with invalid password, register with duplicate email, missing auth token, missing mandatory fields.
 - ❌ Do NOT generate test cases for features NOT mentioned in the user story.
+- ❌ **NEVER generate test cases for Admin deleting a Candidate** (`DELETE /api/admin/users/{id}`) — Admin deleting any user (Candidate, Recruiter, etc.) is excluded from all test case generation regardless of user story content, supplementary sections, or system behavior summaries.
 
 ---
 
@@ -161,6 +214,49 @@ Before generating any test case, **read every class** inside `src/main/java/com/
 
 > ✅ **Every time you generate test cases, re-read the class files** to pick up any newly added endpoints or fields.
 > ✅ If a new POJO or endpoint is found that is not in the table below, add it to your test cases.
+
+---
+
+### 🔴 MANDATORY — Read `userDetails.properties` Before Writing Any Testdata JSON
+
+**Always read `src/main/resources/testdata/userDetails.properties`** before creating the per-test testdata JSON file.  
+The key prefixes in the testdata JSON MUST match the prefixes defined in `userDetails.properties`.
+
+**Actual User Registry (source of truth — read this file, never guess):**
+
+| Prefix | Actual Email | Password | Role | fullName to use in testdata JSON |
+|---|---|---|---|---|
+| `admin` | `admin@test.com` | `admin123` | ADMIN | `Admin1` |
+| `recruiter1` | `jaydeep@test.com` | `pass123` | RECRUITER | `Recruiter1` |
+| `recruiter2` | `smitha@test.com` | `pass123` | RECRUITER | `Recruiter2` |
+| `candidate1` | `omkar@test.com` | `pass123` | CANDIDATE | `Candidate1` |
+| `candidate2` | `prajwal@test.com` | `pass123` | CANDIDATE | `Candidate2` |
+| `candidate3` | `manik@test.com` | `pass123` | CANDIDATE | `Candidate3` |
+
+**Rules:**
+- ✅ Testdata JSON key prefix (e.g. `candidate1.fullName`) MUST match the prefix in `userDetails.properties` (e.g. `candidate1.email=omkar@test.com`)
+- ✅ `fullName` in testdata JSON uses the **generic role-based name** — `Candidate1`, `Recruiter1`, `Admin1` — NOT the email username
+- ❌ Email and password are NEVER written in testdata JSON — they come from `tokenManager.getEmail/getPassword("prefix")` at runtime
+- ❌ Do NOT invent new prefixes — only use: `admin`, `recruiter1`, `recruiter2`, `candidate1`, `candidate2`, `candidate3`
+
+**Correct testdata JSON key structure (aligned with `userDetails.properties`):**
+```json
+{
+  "admin.fullName":      "Admin1",
+  "admin.phone":         "9000000001",
+  "admin.role":          "ADMIN",
+
+  "recruiter1.fullName": "Recruiter1",
+  "recruiter1.phone":    "9000000002",
+  "recruiter1.role":     "RECRUITER",
+
+  "candidate1.fullName": "Candidate1",
+  "candidate1.phone":    "9000000004",
+  "candidate1.role":     "CANDIDATE"
+}
+```
+> `candidate1` prefix → binds to `candidate1.email=omkar@test.com` in `userDetails.properties`  
+> `recruiter1` prefix → binds to `recruiter1.email=jaydeep@test.com` in `userDetails.properties`
 
 ---
 
@@ -256,7 +352,7 @@ Before generating any test case, **read every class** inside `src/main/java/com/
 | `POST` | `http://localhost:5000/api/applications` | `ApplicationRequestPOJO`: `jobId` (int), `coverLetter` | Candidate only |
 | `GET` | `http://localhost:5000/api/applications/my` | — (no body) | Candidate's own applications |
 | `GET` | `http://localhost:5000/api/applications/job/{jobId}` | — (no body) | Recruiter views applicants for a job |
-| `PUT` | `http://localhost:5000/api/applications/{id}/status?status=SHORTLISTED` | query param: `status` | Status values: PENDING, REVIEWED, SHORTLISTED, REJECTED, ACCEPTED |
+| `PUT` | `http://localhost:5000/api/applications/{id}/status?status=INTERVIEW_SCHEDULED` | query param: `status` | Status values: **INTERVIEW_SCHEDULED, ON_HOLD, REJECTED, SELECTED** — **SELECTED triggers auto-rejection of all other applicants + job deactivation** |
 
 **Sample application request:**
 ```json
@@ -494,10 +590,12 @@ Steps:
 
 ## Output Summary
 
-| File | Location | Created By |
-|---|---|---|
-| `<UserStoryName>.json` | `src/main/resources/TestCases/data/` | **This skill — you create this** |
-| `<UserStoryName>.xlsx` | `src/main/resources/TestCases/` | `TestCaseGenerator.generate()` — auto |
+| File | Location | Created By | When |
+|---|---|---|---|
+| `<UserStoryName>.json` | `src/main/resources/TestCases/data/` | **This skill — you create this** | Step 1: immediately after requirements analysis |
+| `<UserStoryName>.xlsx` | `src/main/resources/TestCases/` | `TestCaseGenerator.generate()` — auto | Step 2: immediately after JSON is created — **before** any test class |
+
+> ✅ Both files must exist and be verified before handing off to code-generation.
 
 ---
 
@@ -511,8 +609,11 @@ Steps:
 - ✅ Mode 1 (high-level / one test case) → generate **1 E2E test case only**.
 - ✅ Mode 2 (all scenarios / complex) → **one per AC + business negatives + 1 E2E** at the end.
 - ✅ Identify API dependencies (e.g., need jobId from search before applying).
+- ✅ **Use generic role-based names** in all test case content — NEVER use real person names.
 - ❌ Do NOT generate: login with invalid password, register with duplicate email, missing auth token, missing mandatory fields.
 - ❌ Do NOT generate test cases for features NOT mentioned in the user story.
+- ❌ **NEVER generate test cases for Admin deleting a Candidate** (`DELETE /api/admin/users/{id}`) — Admin deleting any user (Candidate, Recruiter, etc.) is excluded from all test case generation regardless of what any user story section says.
+- ❌ NEVER use real names (Manik, Prajwal, Omkar, Jaydeep, Smitha) in `fullName`, `coverLetter`, or any test step content.
 
 ### Phase 2 — Test Case Generation
 - ✅ **Always ensure `src/main/resources/TestCases/data/` directory exists** — create it if missing.
@@ -524,6 +625,9 @@ Steps:
 - ✅ Response bodies must reflect **realistic nested API output** (job object, candidate object, status etc.).
 - ✅ Each test case should cover a **complete business flow** (multi-step).
 - ✅ Use real field names from POJO classes in `src/main/java/com/hiring/pojo/`.
+- ✅ **Run `TestCaseGenerator` IMMEDIATELY after creating the JSON** — Excel must exist before any test class is written.
+- ✅ **Verify Excel row count** matches step count in JSON before proceeding to code generation.
+- ❌ NEVER write a test class before the JSON AND Excel are both created and verified.
 - ❌ NEVER put just "200 OK" or "201 Created" as the full response — always include the JSON body.
 - ❌ NEVER put `TestCaseEntry` objects in `SampleTest.java` or any test file.
 - ❌ NEVER modify `TestCaseGenerator.java` for new user stories — just create the JSON.

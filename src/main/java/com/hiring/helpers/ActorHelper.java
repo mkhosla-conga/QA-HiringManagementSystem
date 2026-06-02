@@ -174,7 +174,7 @@ public class ActorHelper {
     }
 
     /**
-     * Update application status (e.g., PENDING, REVIEWED, SHORTLISTED, REJECTED, ACCEPTED).
+     * Update application status (e.g., SELECTED, INTERVIEW_SCHEDULED, REJECTED, ON_HOLD).
      */
     public Response updateApplicationStatus(String applicationId, String status) throws Exception {
         String url = RestUtils.replacePathParam(URLGenerator.APPLICATION_STATUS, "id", applicationId);

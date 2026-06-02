@@ -135,7 +135,7 @@
     "slNo": "5",
     "testCaseId": "TC_HMS_005",
     "testCaseName": "Apply for Same Job Twice",
-    "testCaseDescription": "Verify that applying to the same jobId a second time returns HTTP 409 Conflict with a duplicate application error message",
+    "testCaseDescription": "Verify that applying to the same jobId a second time returns HTTP 400 Bad Request with a duplicate application error message",
     "steps": [
       {
         "step": "Login with candidate credentials: POST http://localhost:5000/api/auth/login",
@@ -150,7 +150,7 @@
       {
         "step": "Apply for the same job again (second time): POST http://localhost:5000/api/applications",
         "requestBody": "{\n  \"jobId\": 3,\n  \"coverLetter\": \"Second attempt to apply for the same role.\"\n}",
-        "responseBody": "{\n  \"success\": false,\n  \"status\": 409,\n  \"message\": \"You have already applied for this job\"\n}"
+        "responseBody": "{\n  \"success\": false,\n  \"status\": 400,\n  \"message\": \"You have already applied for this job\"\n}"
       }
     ]
   },
